@@ -43,7 +43,6 @@ namespace LabtechScheduler
             public int Bottom;
         }
 
-        // Core Controls
         private RadioButton rbNight;
         private RadioButton rbDay;
         private ComboBox cbDaySelect;
@@ -58,11 +57,27 @@ namespace LabtechScheduler
         private string dbPath = "Background Database HORIZON.txt";
         private List<string> dbEntries = new List<string>();
 
-        private readonly string[] Gangways = { "ensenada", "mazatlan", "puerto vallarta", "la paz", "cabo", "cabo san lucas" };
-        private readonly string[] Decks = { "deck", "waterworks", "water works", "slide", "slides", "skyride", "sky ride", "lido rail", "rail", "ropes", "water in the back" };
-        private readonly string[] Costumes = { "elephant", "ellie", "duck", "ducky", "pirate" };
-        private readonly string[] Dining = { "horizon", "vista", "steakhouse", "cucina", "pig & anchor", "pigandanchor", "alchemy", "coffee shop", "dining" };
-        private readonly string[] NonShooting = { "gallery", "production", "edit till", "retail", "refill", "open gallery", "promote iris", "3 dreams booking", "organise and clean", "40+ sessions", "2 ds bookings" };
+        // Pure physical locations to ignore for station codes
+        private readonly string[] PhysicalLocations = {
+            "steakhouse", "coffee shop", "pig & anchor", "pig and anchor", "pigandanchor",
+            "dreamscape", "cherry on top", "liquor shop", "liquour shop",
+            "gallery 1", "gallery 2", "open gallery", "gallery",
+            "lobby dreams", "lobby gs1", "lobby gs2", "lobby gs",
+            "deck 3", "deck 4", "deck 5", "deck staircase", "staircase starts", "staircase"
+        };
+
+        // Words indicating off-duty, notes, or non-shooting duties
+        private readonly string[] IgnoreKeywords = {
+            "off", "evening off", "day off", "vacation", "sick",
+            "props", "props bag", "bag 1", "bag 2", "barriers", "bench", "tables", "stand/sit",
+            "working hours", "rest hours", "sessions", "target", "booking", "challenge",
+            "team set up", "tear down", "emergency tear down", "port manning", "clean & flyers",
+            "edit till", "promote iris", "refill", "retail", "production", "organise"
+        };
+
+        private readonly string[] Costumes = { "elephant", "ellie", "duck", "ducky", "pirate", "bunny", "santa", "sailor" };
+        private readonly string[] Gangways = { "ensenada", "mazatlan", "puerto vallarta", "la paz", "cabo", "cabo san lucas", "cozumel", "amber cove" };
+        private readonly string[] Decks = { "deck", "waterworks", "water works", "slide", "slides", "skyride", "sky ride", "lido rail", "rail", "ropes" };
 
         private Dictionary<int, Tuple<string, string>> currentSchedule = new Dictionary<int, Tuple<string, string>>();
 
@@ -70,19 +85,28 @@ namespace LabtechScheduler
         {
             InitializeComponent();
             ApplyLtsIcon();
+            TryFindDatabaseFile();
             LoadDatabase();
             EnableDragAndDrop();
         }
 
+        private void TryFindDatabaseFile()
+        {
+            if (File.Exists("PO Background Database.txt"))
+                dbPath = "PO Background Database.txt";
+            else if (File.Exists("Background Database HORIZON.txt"))
+                dbPath = "Background Database HORIZON.txt";
+        }
+
         private void InitializeComponent()
         {
-            this.Text = "Labtech Scheduler v1.4";
+            this.Text = "Labtech Scheduler v1.5";
             this.Size = new Size(660, 650);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
 
-            // 1. Shift & Day Selection Group
+            // 1. Shift & Cruise Day
             GroupBox gbShift = new GroupBox
             {
                 Text = "1. Shift & Cruise Day Selection",
@@ -92,7 +116,7 @@ namespace LabtechScheduler
 
             rbNight = new RadioButton
             {
-                Text = "🌙 Night Event (Portraits, Dining)",
+                Text = "🌙 Night Event (Portraits, Dining, Night Costumes)",
                 Location = new Point(15, 22),
                 AutoSize = true,
                 Checked = true
@@ -101,7 +125,7 @@ namespace LabtechScheduler
 
             rbDay = new RadioButton
             {
-                Text = "☀️ Day Event (Deck, Gangway, Costumes)",
+                Text = "☀️ Day Event (Deck, Gangway, Day Costumes)",
                 Location = new Point(15, 45),
                 AutoSize = true
             };
@@ -129,7 +153,7 @@ namespace LabtechScheduler
             gbShift.Controls.Add(lblDayPick);
             gbShift.Controls.Add(cbDaySelect);
 
-            // 2. Schedule File Input Group
+            // 2. Schedule File Input
             GroupBox gbFile = new GroupBox
             {
                 Text = "2. Schedule Source (.xlsx, .jpg, .png) [Drag & Drop Supported]",
@@ -139,7 +163,7 @@ namespace LabtechScheduler
 
             lblFile = new Label
             {
-                Text = "Drag & drop an Excel file or Photo here, or browse...",
+                Text = "Drag & drop an Excel schedule or Photo here...",
                 Location = new Point(15, 25),
                 Size = new Size(470, 20),
                 ForeColor = Color.Gray
@@ -156,7 +180,7 @@ namespace LabtechScheduler
             gbFile.Controls.Add(lblFile);
             gbFile.Controls.Add(btnBrowse);
 
-            // 3. Database Manager Group
+            // 3. Database Selection
             GroupBox gbDb = new GroupBox
             {
                 Text = "3. Background Database (.txt)",
@@ -166,7 +190,7 @@ namespace LabtechScheduler
 
             lblDb = new Label
             {
-                Text = "Database: Background Database HORIZON.txt (0 items)",
+                Text = $"Database: {Path.GetFileName(dbPath)} (0 items)",
                 Location = new Point(15, 25),
                 Size = new Size(370, 20)
             };
@@ -191,7 +215,7 @@ namespace LabtechScheduler
             gbDb.Controls.Add(btnAddEntry);
             gbDb.Controls.Add(btnChangeDb);
 
-            // 4. Preview & Editable Grid
+            // 4. Preview Table
             GroupBox gbPreview = new GroupBox
             {
                 Text = "4. Schedule Preview (Editable - Double-click any cell to adjust)",
@@ -418,21 +442,15 @@ namespace LabtechScheduler
             return promptForm.ShowDialog() == DialogResult.OK ? textBox.Text : "";
         }
 
-        private string FuzzyMatchStationByDay(string query, int dayIndex)
+        private string GetDiningStationByDay(string diningName, int dayIndex)
         {
-            if (string.IsNullOrWhiteSpace(query)) return "";
-            string clean = query.Trim().ToLower();
-
+            string clean = diningName.Trim().ToLower();
             List<string> matches = new List<string>();
 
-            // Collect all matching occurrences from database
             foreach (string entry in dbEntries)
             {
                 string[] parts = entry.Split(new[] { ',' }, 2);
-                string code = parts[0].Trim().ToLower();
-                string name = parts[1].Trim().ToLower();
-
-                if (name == clean || entry.ToLower() == clean || code == clean || name.Contains(clean) || clean.Contains(name))
+                if (parts.Length == 2 && parts[1].Trim().ToLower() == clean)
                 {
                     matches.Add(entry);
                 }
@@ -440,20 +458,63 @@ namespace LabtechScheduler
 
             if (matches.Count > 0)
             {
-                // Day 1 -> index 0, Day 2 -> index 1, etc. Wrap around if day exceeds available matches
                 int idx = (dayIndex - 1) % matches.Count;
                 return matches[idx];
             }
 
-            // Fallback to general similarity matching across all entries
-            double bestScore = 0.0;
-            string bestMatch = "";
+            return "";
+        }
+
+        private string MatchBackgroundFromDatabase(string query, int dayIndex)
+        {
+            if (string.IsNullOrWhiteSpace(query)) return "";
+            string clean = Regex.Replace(query.Trim().ToLower(), @"\d{1,2}(:\d{2})?\s*(am|pm)?\s*(to|-)?\s*\d{1,2}(:\d{2})?\s*(am|pm)?", "").Trim();
+            clean = Regex.Replace(clean, @"[^a-z0-9]", "");
+
+            if (clean.Length < 3) return "";
+
+            // Check if string matches a physical location (skip if not Alchemy backdrop)
+            foreach (string loc in PhysicalLocations)
+            {
+                string cleanLoc = Regex.Replace(loc, @"[^a-z0-9]", "");
+                if (clean == cleanLoc && clean != "alchemy")
+                {
+                    return "";
+                }
+            }
+
+            List<string> exactMatches = new List<string>();
+
             foreach (string entry in dbEntries)
             {
                 string[] parts = entry.Split(new[] { ',' }, 2);
-                string name = parts[1].Trim().ToLower();
+                if (parts.Length < 2) continue;
 
-                double score = CalculateSimilarity(clean, name);
+                string nameClean = Regex.Replace(parts[1].Trim().ToLower(), @"[^a-z0-9]", "");
+
+                if (nameClean == clean || clean.Contains(nameClean) || nameClean.Contains(clean))
+                {
+                    exactMatches.Add(entry);
+                }
+            }
+
+            if (exactMatches.Count > 0)
+            {
+                int idx = (dayIndex - 1) % exactMatches.Count;
+                return exactMatches[idx];
+            }
+
+            // Fuzzy similarity check against database entries
+            double bestScore = 0.0;
+            string bestMatch = "";
+
+            foreach (string entry in dbEntries)
+            {
+                string[] parts = entry.Split(new[] { ',' }, 2);
+                if (parts.Length < 2) continue;
+
+                string nameClean = Regex.Replace(parts[1].Trim().ToLower(), @"[^a-z0-9]", "");
+                double score = CalculateSimilarity(clean, nameClean);
                 if (score > bestScore)
                 {
                     bestScore = score;
@@ -461,10 +522,10 @@ namespace LabtechScheduler
                 }
             }
 
-            if (bestScore >= 0.70)
+            if (bestScore >= 0.75)
                 return bestMatch;
 
-            return query.Trim();
+            return "";
         }
 
         private double CalculateSimilarity(string s, string t)
@@ -495,13 +556,9 @@ namespace LabtechScheduler
             if (string.IsNullOrEmpty(loadedFilePath) || !File.Exists(loadedFilePath)) return;
 
             if (isImageFile)
-            {
                 ParseImageFile();
-            }
             else
-            {
                 ParseExcelFile();
-            }
         }
 
         private void ParseExcelFile()
@@ -510,7 +567,7 @@ namespace LabtechScheduler
             gridPreview.Rows.Clear();
 
             bool isNight = rbNight.Checked;
-            int dayIndex = cbDaySelect.SelectedIndex + 1; // 1-based day index
+            int dayIndex = cbDaySelect.SelectedIndex + 1;
 
             try
             {
@@ -685,85 +742,47 @@ foreach ($line in $result.Lines) {
         private Tuple<string, string> DetermineRoleAndStation(int pNum, List<string> tasks, bool isNight, int dayIndex)
         {
             string combined = string.Join(" // ", tasks).ToLower();
-            string role = "";
-            string station = "";
 
-            if (isNight)
+            // 1. Check for off-duty / leave notes -> leave slot completely blank
+            foreach (string word in new[] { "evening off", "day off", "off oct", "off", "vacation", "sick" })
             {
-                foreach (string dr in Dining)
+                if (Regex.IsMatch(combined, @"\b" + word + @"\b"))
                 {
-                    if (combined.Contains(dr))
-                    {
-                        role = $"DR{pNum}";
-                        string match = FuzzyMatchStationByDay(dr, dayIndex);
-                        station = !string.IsNullOrEmpty(match) ? match : Capitalize(dr);
-                        return Tuple.Create(role, station);
-                    }
-                }
-
-                foreach (string c in Costumes)
-                {
-                    if (combined.Contains(c))
-                    {
-                        role = $"CS{pNum}";
-                        string match = FuzzyMatchStationByDay(c, dayIndex);
-                        station = !string.IsNullOrEmpty(match) ? match : Capitalize(c);
-                        return Tuple.Create(role, station);
-                    }
-                }
-
-                bool isNonShooting = false;
-                foreach (string ns in new[] { "edit till", "gallery 4 pm", "promote iris", "refill retails" })
-                {
-                    if (combined.Contains(ns) && !combined.Contains("backdrop") && !combined.Contains("sequin") && !combined.Contains("mystique") && !combined.Contains("gate"))
-                    {
-                        isNonShooting = true;
-                        break;
-                    }
-                }
-
-                if (!isNonShooting)
-                {
-                    for (int i = tasks.Count - 1; i >= 0; i--)
-                    {
-                        string candidate = tasks[i].Trim();
-                        if (candidate.Length > 2 && !ContainsAny(candidate.ToLower(), new[] { "team set up", "booking", "sessions", "working hours", "rest hours", "40+ sessions" }))
-                        {
-                            string matched = FuzzyMatchStationByDay(candidate, dayIndex);
-                            if (!string.IsNullOrEmpty(matched) && matched != candidate)
-                            {
-                                return Tuple.Create($"P{pNum}", matched);
-                            }
-                            else if (string.IsNullOrEmpty(station) && !ContainsAny(candidate.ToLower(), new[] { "bring", "flash", "poses", "sitting", "standing", "images", "call", "replace", "6:00pm", "5:00pm" }))
-                            {
-                                station = FuzzyMatchStationByDay(candidate, dayIndex);
-                                role = $"P{pNum}";
-                            }
-                        }
-                    }
+                    return Tuple.Create("", "");
                 }
             }
-            else
-            {
-                foreach (string c in Costumes)
-                {
-                    if (combined.Contains(c))
-                    {
-                        role = $"CS{pNum}";
-                        string match = FuzzyMatchStationByDay(c, dayIndex);
-                        station = !string.IsNullOrEmpty(match) ? match : Capitalize(c);
-                        return Tuple.Create(role, station);
-                    }
-                }
 
+            // 2. Check for Dining Rooms (Horizon & Vista) -> DR role with Day sequential code
+            if (combined.Contains("horizon"))
+            {
+                string matched = GetDiningStationByDay("horizon", dayIndex);
+                return Tuple.Create($"DR{pNum}", matched);
+            }
+            if (combined.Contains("vista"))
+            {
+                string matched = GetDiningStationByDay("vista", dayIndex);
+                return Tuple.Create($"DR{pNum}", matched);
+            }
+
+            // 3. Check for Costumes (Day or Night) -> CS role
+            foreach (string c in Costumes)
+            {
+                if (combined.Contains(c))
+                {
+                    string matched = MatchBackgroundFromDatabase(c, dayIndex);
+                    return Tuple.Create($"CS{pNum}", matched);
+                }
+            }
+
+            // 4. DAY EVENT (Deck & Gangways)
+            if (!isNight)
+            {
                 foreach (string gw in Gangways)
                 {
                     if (combined.Contains(gw))
                     {
-                        role = $"GW{pNum}";
-                        string match = FuzzyMatchStationByDay(gw, dayIndex);
-                        station = !string.IsNullOrEmpty(match) ? match : Capitalize(gw);
-                        return Tuple.Create(role, station);
+                        string matched = MatchBackgroundFromDatabase(gw, dayIndex);
+                        return Tuple.Create($"GW{pNum}", matched);
                     }
                 }
 
@@ -771,27 +790,43 @@ foreach ($line in $result.Lines) {
                 {
                     if (combined.Contains(dk))
                     {
-                        role = $"DK{pNum}";
-                        string match = FuzzyMatchStationByDay(dk, dayIndex);
-                        station = !string.IsNullOrEmpty(match) ? match : Capitalize(dk);
-                        return Tuple.Create(role, station);
-                    }
-                }
-
-                foreach (string t in tasks)
-                {
-                    if (!ContainsAny(t.ToLower(), NonShooting) && !ContainsAny(t.ToLower(), new[] { "img", "target", "organise", "couples & singles" }))
-                    {
-                        string match = FuzzyMatchStationByDay(t, dayIndex);
-                        if (!string.IsNullOrEmpty(match))
-                        {
-                            return Tuple.Create($"P{pNum}", match);
-                        }
+                        string matched = MatchBackgroundFromDatabase(dk, dayIndex);
+                        return Tuple.Create($"DK{pNum}", matched);
                     }
                 }
             }
 
-            return Tuple.Create(role, station);
+            // 5. Studio Backdrops (Ignore physical locations, props, and duty descriptions)
+            for (int i = tasks.Count - 1; i >= 0; i--)
+            {
+                string candidate = tasks[i].Trim();
+                string candLower = candidate.ToLower();
+
+                // Skip pure physical locations
+                bool isPureLocation = false;
+                foreach (string loc in PhysicalLocations)
+                {
+                    if (candLower == loc || (candLower.Contains(loc) && !candLower.Contains("alchemy") && !candLower.Contains("sequin") && !candLower.Contains("mystique")))
+                    {
+                        isPureLocation = true;
+                        break;
+                    }
+                }
+                if (isPureLocation) continue;
+
+                // Skip prop lines and off notes
+                if (ContainsAny(candLower, IgnoreKeywords))
+                    continue;
+
+                // Attempt to match against database
+                string matched = MatchBackgroundFromDatabase(candidate, dayIndex);
+                if (!string.IsNullOrEmpty(matched))
+                {
+                    return Tuple.Create($"P{pNum}", matched);
+                }
+            }
+
+            return Tuple.Create("", "");
         }
 
         private bool ContainsAny(string str, string[] list)
@@ -801,12 +836,6 @@ foreach ($line in $result.Lines) {
                 if (str.Contains(item)) return true;
             }
             return false;
-        }
-
-        private string Capitalize(string str)
-        {
-            if (string.IsNullOrEmpty(str)) return "";
-            return char.ToUpper(str[0]) + str.Substring(1);
         }
 
         private async void AutoFill_Click(object sender, EventArgs e)
@@ -865,12 +894,10 @@ foreach ($line in $result.Lines) {
             int windowX = rect.Left;
             int windowY = rect.Top;
 
-            // Tally Board Grid Layout Offsets (relative to window top-left)
-            // Based on standard 1080p WinForms layout
             int startRowY = windowY + 115;
             int rowHeight = 24;
-            int col2X = windowX + 85;   // Role Dropdown Column
-            int col3X = windowX + 220;  // Station Dropdown Column
+            int col2X = windowX + 85;
+            int col3X = windowX + 220;
 
             lblStatus.Text = "Click-filling schedule into Tally Board...";
             lblStatus.ForeColor = Color.Blue;
@@ -888,7 +915,7 @@ foreach ($line in $result.Lines) {
 
                 int currentY = startRowY + ((i - 1) * rowHeight);
 
-                // 1. Click Column 2 (Role) and paste
+                // 1. Column 2 (Role)
                 if (!string.IsNullOrEmpty(role))
                 {
                     SetCursorPos(col2X, currentY);
@@ -902,7 +929,7 @@ foreach ($line in $result.Lines) {
                     await Task.Delay(50);
                 }
 
-                // 2. Click Column 3 (Station) and paste
+                // 2. Column 3 (Station)
                 if (!string.IsNullOrEmpty(station))
                 {
                     SetCursorPos(col3X, currentY);
