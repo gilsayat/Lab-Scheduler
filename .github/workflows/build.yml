@@ -1,4 +1,4 @@
-name: Build Labtech Scheduler
+name: Build Labtech Scheduler v1.3
 
 on:
   push:
@@ -22,11 +22,11 @@ jobs:
     - name: Restore NuGet Packages
       run: nuget restore LabtechScheduler.csproj
 
-    - name: Build Solution
+    - name: Build Single Executable Solution
       run: msbuild LabtechScheduler.csproj /p:Configuration=Release /p:Platform="AnyCPU"
 
     - name: Upload Executable Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: LabtechScheduler-App
-        path: bin/Release/LabtechScheduler.exe
+        name: LabtechScheduler_v1.3-App
+        path: bin/Release/LabtechScheduler_v1.3.exe
