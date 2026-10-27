@@ -20,8 +20,8 @@ namespace LabtechScheduler
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
 
         [DllImport("user32.dll")]
         private static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
@@ -55,9 +55,10 @@ namespace LabtechScheduler
         private string loadedFilePath = "";
         private bool isImageFile = false;
         private string dbPath = "Background Database HORIZON.txt";
+        private string rosterPath = "PhotographerRoster.txt";
         private List<string> dbEntries = new List<string>();
+        private Dictionary<string, int> customNameMappings = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        // Pure physical locations to ignore for station codes
         private readonly string[] PhysicalLocations = {
             "steakhouse", "coffee shop", "pig & anchor", "pig and anchor", "pigandanchor",
             "dreamscape", "cherry on top", "liquor shop", "liquour shop",
@@ -66,7 +67,6 @@ namespace LabtechScheduler
             "deck 3", "deck 4", "deck 5", "deck staircase", "staircase starts", "staircase"
         };
 
-        // Words indicating off-duty, notes, or non-shooting duties
         private readonly string[] IgnoreKeywords = {
             "off", "evening off", "day off", "vacation", "sick",
             "props", "props bag", "bag 1", "bag 2", "barriers", "bench", "tables", "stand/sit",
@@ -87,6 +87,7 @@ namespace LabtechScheduler
             ApplyLtsIcon();
             TryFindDatabaseFile();
             LoadDatabase();
+            LoadRosterSettings();
             EnableDragAndDrop();
         }
 
@@ -98,15 +99,52 @@ namespace LabtechScheduler
                 dbPath = "Background Database HORIZON.txt";
         }
 
+        private void LoadRosterSettings()
+        {
+            customNameMappings.Clear();
+            if (!File.Exists(rosterPath))
+            {
+                // Default setup: Gil -> 14, Sanyukta -> 15
+                customNameMappings["Gil"] = 14;
+                customNameMappings["Sanyukta"] = 15;
+                SaveRosterSettings();
+                return;
+            }
+
+            string[] lines = File.ReadAllLines(rosterPath);
+            foreach (string line in lines)
+            {
+                string[] parts = line.Split('=');
+                if (parts.Length == 2 && int.TryParse(parts[0].Trim(), out int slot))
+                {
+                    string name = parts[1].Trim();
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        customNameMappings[name] = slot;
+                    }
+                }
+            }
+        }
+
+        private void SaveRosterSettings()
+        {
+            StringBuilder sb = new StringBuilder();
+            foreach (var kvp in customNameMappings)
+            {
+                sb.AppendLine($"{kvp.Value}={kvp.Key}");
+            }
+            File.WriteAllText(rosterPath, sb.ToString());
+        }
+
         private void InitializeComponent()
         {
-            this.Text = "Labtech Scheduler v1.5";
+            this.Text = "Labtech Scheduler v1.6";
             this.Size = new Size(660, 650);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
 
-            // 1. Shift & Cruise Day
+            // 1. Shift & Day
             GroupBox gbShift = new GroupBox
             {
                 Text = "1. Shift & Cruise Day Selection",
@@ -116,7 +154,7 @@ namespace LabtechScheduler
 
             rbNight = new RadioButton
             {
-                Text = "🌙 Night Event (Portraits, Dining, Night Costumes)",
+                Text = "🌙 Night Event (Portraits, Dining)",
                 Location = new Point(15, 22),
                 AutoSize = true,
                 Checked = true
@@ -125,7 +163,7 @@ namespace LabtechScheduler
 
             rbDay = new RadioButton
             {
-                Text = "☀️ Day Event (Deck, Gangway, Day Costumes)",
+                Text = "☀️ Day Event (Deck, Gangway, Costumes)",
                 Location = new Point(15, 45),
                 AutoSize = true
             };
@@ -141,19 +179,28 @@ namespace LabtechScheduler
             cbDaySelect = new ComboBox
             {
                 Location = new Point(330, 42),
-                Size = new Size(265, 25),
+                Size = new Size(160, 25),
                 DropDownStyle = ComboBoxStyle.DropDownList
             };
             cbDaySelect.Items.AddRange(new object[] { "Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7", "Day 8" });
             cbDaySelect.SelectedIndex = 0;
             cbDaySelect.SelectedIndexChanged += (s, e) => ParseCurrentFile();
 
+            Button btnRosterSettings = new Button
+            {
+                Text = "⚙️ Roster",
+                Location = new Point(500, 40),
+                Size = new Size(95, 28)
+            };
+            btnRosterSettings.Click += (s, e) => OpenRosterSettingsDialog();
+
             gbShift.Controls.Add(rbNight);
             gbShift.Controls.Add(rbDay);
             gbShift.Controls.Add(lblDayPick);
             gbShift.Controls.Add(cbDaySelect);
+            gbShift.Controls.Add(btnRosterSettings);
 
-            // 2. Schedule File Input
+            // 2. Schedule File
             GroupBox gbFile = new GroupBox
             {
                 Text = "2. Schedule Source (.xlsx, .jpg, .png) [Drag & Drop Supported]",
@@ -180,7 +227,7 @@ namespace LabtechScheduler
             gbFile.Controls.Add(lblFile);
             gbFile.Controls.Add(btnBrowse);
 
-            // 3. Database Selection
+            // 3. Database
             GroupBox gbDb = new GroupBox
             {
                 Text = "3. Background Database (.txt)",
@@ -274,6 +321,79 @@ namespace LabtechScheduler
             this.Controls.Add(gbPreview);
             this.Controls.Add(lblStatus);
             this.Controls.Add(btnAutoFill);
+        }
+
+        private void OpenRosterSettingsDialog()
+        {
+            Form settingsForm = new Form
+            {
+                Text = "Photographer Roster Settings",
+                Size = new Size(400, 520),
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            Panel scrollPanel = new Panel
+            {
+                Location = new Point(10, 10),
+                Size = new Size(365, 410),
+                AutoScroll = true
+            };
+
+            Dictionary<int, TextBox> boxes = new Dictionary<int, TextBox>();
+            int yPos = 10;
+
+            // Invert lookup
+            Dictionary<int, string> slotToName = new Dictionary<int, string>();
+            foreach (var kvp in customNameMappings)
+                slotToName[kvp.Value] = kvp.Key;
+
+            for (int i = 1; i <= 30; i++)
+            {
+                Label lbl = new Label { Text = $"Slot P{i:D2}:", Location = new Point(10, yPos + 3), Width = 80 };
+                TextBox txt = new TextBox { Location = new Point(100, yPos), Width = 230 };
+
+                if (slotToName.ContainsKey(i))
+                    txt.Text = slotToName[i];
+
+                boxes[i] = txt;
+                scrollPanel.Controls.Add(lbl);
+                scrollPanel.Controls.Add(txt);
+                yPos += 30;
+            }
+
+            Button btnSave = new Button
+            {
+                Text = "Save Roster",
+                Location = new Point(130, 430),
+                Size = new Size(120, 35),
+                BackColor = Color.FromArgb(0, 122, 204),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+
+            btnSave.Click += (s, e) =>
+            {
+                customNameMappings.Clear();
+                foreach (var kvp in boxes)
+                {
+                    string name = kvp.Value.Text.Trim();
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        customNameMappings[name] = kvp.Key;
+                    }
+                }
+                SaveRosterSettings();
+                settingsForm.Close();
+                ParseCurrentFile();
+                MessageBox.Show("Photographer roster settings saved successfully!", "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+
+            settingsForm.Controls.Add(scrollPanel);
+            settingsForm.Controls.Add(btnSave);
+            settingsForm.ShowDialog();
         }
 
         private void ApplyLtsIcon()
@@ -473,7 +593,6 @@ namespace LabtechScheduler
 
             if (clean.Length < 3) return "";
 
-            // Check if string matches a physical location (skip if not Alchemy backdrop)
             foreach (string loc in PhysicalLocations)
             {
                 string cleanLoc = Regex.Replace(loc, @"[^a-z0-9]", "");
@@ -504,7 +623,6 @@ namespace LabtechScheduler
                 return exactMatches[idx];
             }
 
-            // Fuzzy similarity check against database entries
             double bestScore = 0.0;
             string bestMatch = "";
 
@@ -590,7 +708,7 @@ namespace LabtechScheduler
                         Match m = Regex.Match(colHeader, @"P(\d+)", RegexOptions.IgnoreCase);
                         if (!m.Success) continue;
 
-                        int pNum = int.Parse(m.Groups[1].Value);
+                        int defaultSlot = int.Parse(m.Groups[1].Value);
 
                         List<string> tasks = new List<string>();
                         for (int r = startRow; r <= endRow && r < table.Rows.Count; r++)
@@ -600,8 +718,21 @@ namespace LabtechScheduler
                                 tasks.Add(val);
                         }
 
-                        Tuple<string, string> parsed = DetermineRoleAndStation(pNum, tasks, isNight, dayIndex);
-                        currentSchedule[pNum] = parsed;
+                        // Check name overrides
+                        int finalSlot = defaultSlot;
+                        string allText = colHeader + " " + string.Join(" ", tasks);
+
+                        foreach (var kvp in customNameMappings)
+                        {
+                            if (Regex.IsMatch(allText, @"\b" + Regex.Escape(kvp.Key) + @"\b", RegexOptions.IgnoreCase))
+                            {
+                                finalSlot = kvp.Value;
+                                break;
+                            }
+                        }
+
+                        Tuple<string, string> parsed = DetermineRoleAndStation(finalSlot, tasks, isNight, dayIndex);
+                        currentSchedule[finalSlot] = parsed;
                     }
                 }
 
@@ -641,17 +772,29 @@ namespace LabtechScheduler
                 Match m = Regex.Match(line, @"\bP(\d+)\b", RegexOptions.IgnoreCase);
                 if (m.Success)
                 {
-                    int pNum = int.Parse(m.Groups[1].Value);
+                    int defaultSlot = int.Parse(m.Groups[1].Value);
                     List<string> contextLines = new List<string> { line };
                     for (int j = 1; j <= 3 && (i + j) < lines.Length; j++)
                     {
                         contextLines.Add(lines[i + j]);
                     }
 
-                    Tuple<string, string> parsed = DetermineRoleAndStation(pNum, contextLines, isNight, dayIndex);
+                    int finalSlot = defaultSlot;
+                    string allText = string.Join(" ", contextLines);
+
+                    foreach (var kvp in customNameMappings)
+                    {
+                        if (Regex.IsMatch(allText, @"\b" + Regex.Escape(kvp.Key) + @"\b", RegexOptions.IgnoreCase))
+                        {
+                            finalSlot = kvp.Value;
+                            break;
+                        }
+                    }
+
+                    Tuple<string, string> parsed = DetermineRoleAndStation(finalSlot, contextLines, isNight, dayIndex);
                     if (!string.IsNullOrEmpty(parsed.Item1) || !string.IsNullOrEmpty(parsed.Item2))
                     {
-                        currentSchedule[pNum] = parsed;
+                        currentSchedule[finalSlot] = parsed;
                     }
                 }
             }
@@ -743,7 +886,7 @@ foreach ($line in $result.Lines) {
         {
             string combined = string.Join(" // ", tasks).ToLower();
 
-            // 1. Check for off-duty / leave notes -> leave slot completely blank
+            // 1. Off-duty
             foreach (string word in new[] { "evening off", "day off", "off oct", "off", "vacation", "sick" })
             {
                 if (Regex.IsMatch(combined, @"\b" + word + @"\b"))
@@ -752,7 +895,7 @@ foreach ($line in $result.Lines) {
                 }
             }
 
-            // 2. Check for Dining Rooms (Horizon & Vista) -> DR role with Day sequential code
+            // 2. Dining
             if (combined.Contains("horizon"))
             {
                 string matched = GetDiningStationByDay("horizon", dayIndex);
@@ -764,7 +907,7 @@ foreach ($line in $result.Lines) {
                 return Tuple.Create($"DR{pNum}", matched);
             }
 
-            // 3. Check for Costumes (Day or Night) -> CS role
+            // 3. Costumes
             foreach (string c in Costumes)
             {
                 if (combined.Contains(c))
@@ -774,7 +917,7 @@ foreach ($line in $result.Lines) {
                 }
             }
 
-            // 4. DAY EVENT (Deck & Gangways)
+            // 4. DAY EVENT (Decks / Gangways)
             if (!isNight)
             {
                 foreach (string gw in Gangways)
@@ -796,13 +939,12 @@ foreach ($line in $result.Lines) {
                 }
             }
 
-            // 5. Studio Backdrops (Ignore physical locations, props, and duty descriptions)
+            // 5. Studio Backdrops
             for (int i = tasks.Count - 1; i >= 0; i--)
             {
                 string candidate = tasks[i].Trim();
                 string candLower = candidate.ToLower();
 
-                // Skip pure physical locations
                 bool isPureLocation = false;
                 foreach (string loc in PhysicalLocations)
                 {
@@ -814,11 +956,9 @@ foreach ($line in $result.Lines) {
                 }
                 if (isPureLocation) continue;
 
-                // Skip prop lines and off notes
                 if (ContainsAny(candLower, IgnoreKeywords))
                     continue;
 
-                // Attempt to match against database
                 string matched = MatchBackgroundFromDatabase(candidate, dayIndex);
                 if (!string.IsNullOrEmpty(matched))
                 {
@@ -851,10 +991,10 @@ foreach ($line in $result.Lines) {
             string shift = rbNight.Checked ? "NIGHT" : "DAY";
 
             var confirm = MessageBox.Show(
-                $"Auto-Fill [{shift}] Schedule into Tally Board (Click-Based):\n\n" +
-                "1. Open Tally Board and make sure the Scheduler tab is visible.\n" +
-                "2. Click OK.\n" +
-                "3. Hands off the keyboard and mouse while it clicks and fills each row automatically!",
+                $"Auto-Fill [{shift}] Schedule into Tally Board:\n\n" +
+                "1. Click OK.\n" +
+                "2. Click on the Tally Board window during the 3-second countdown to ensure it has focus.\n" +
+                "3. Hands off mouse & keyboard!",
                 "Start Auto-Fill",
                 MessageBoxButtons.OKCancel,
                 MessageBoxIcon.Information
@@ -862,32 +1002,38 @@ foreach ($line in $result.Lines) {
 
             if (confirm != DialogResult.OK) return;
 
-            lblStatus.Text = "Starting in 3 seconds... Keep hands off mouse/keyboard!";
+            lblStatus.Text = "Targeting TallyBoard... (3 seconds)";
             lblStatus.ForeColor = Color.Red;
             btnAutoFill.Enabled = false;
 
             await Task.Delay(3000);
 
             IntPtr tallyHwnd = IntPtr.Zero;
-            foreach (var proc in Process.GetProcesses())
+
+            // Direct process name search for TallyBoard.exe
+            Process[] procs = Process.GetProcessesByName("TallyBoard");
+            if (procs.Length == 0)
+                procs = Process.GetProcessesByName("tallyboard");
+
+            if (procs.Length > 0)
             {
-                if (!string.IsNullOrEmpty(proc.MainWindowTitle) &&
-                    proc.MainWindowTitle.IndexOf("SCHEDULER TALLY BOARD", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    tallyHwnd = proc.MainWindowHandle;
-                    SetForegroundWindow(tallyHwnd);
-                    break;
-                }
+                tallyHwnd = procs[0].MainWindowHandle;
+                SetForegroundWindow(tallyHwnd);
+            }
+            else
+            {
+                // Fallback: Check whatever window is currently foreground
+                tallyHwnd = GetForegroundWindow();
             }
 
             if (tallyHwnd == IntPtr.Zero)
             {
-                MessageBox.Show("Could not find 'SCHEDULER TALLY BOARD' window. Please make sure Tally Board is open.", "Window Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Could not attach to TallyBoard. Please ensure TallyBoard is running.", "Process Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 btnAutoFill.Enabled = true;
                 return;
             }
 
-            await Task.Delay(600);
+            await Task.Delay(500);
 
             RECT rect;
             GetWindowRect(tallyHwnd, out rect);
@@ -915,7 +1061,7 @@ foreach ($line in $result.Lines) {
 
                 int currentY = startRowY + ((i - 1) * rowHeight);
 
-                // 1. Column 2 (Role)
+                // Column 2 (Role)
                 if (!string.IsNullOrEmpty(role))
                 {
                     SetCursorPos(col2X, currentY);
@@ -929,7 +1075,7 @@ foreach ($line in $result.Lines) {
                     await Task.Delay(50);
                 }
 
-                // 2. Column 3 (Station)
+                // Column 3 (Station)
                 if (!string.IsNullOrEmpty(station))
                 {
                     SetCursorPos(col3X, currentY);
