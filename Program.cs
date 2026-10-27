@@ -23,15 +23,14 @@ namespace LabtechScheduler
         [STAThread]
         static void Main()
         {
-            const string appName = "LabtechScheduler_v1.3_SingleInstance_Mutex";
+            const string appName = "LabtechScheduler_v1.4_SingleInstance_Mutex";
             bool createdNew;
 
             mutex = new Mutex(true, appName, out createdNew);
 
             if (!createdNew)
             {
-                // App is already running: bring the open instance to focus and exit
-                IntPtr existingWindow = FindWindow(null, "Labtech Scheduler v1.3");
+                IntPtr existingWindow = FindWindow(null, "Labtech Scheduler v1.4");
                 if (existingWindow != IntPtr.Zero)
                 {
                     ShowWindow(existingWindow, SW_RESTORE);
