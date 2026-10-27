@@ -23,14 +23,14 @@ namespace LabtechScheduler
         [STAThread]
         static void Main()
         {
-            const string appName = "LabtechScheduler_v1.4_SingleInstance_Mutex";
+            const string appName = "LabtechScheduler_v1.5_SingleInstance_Mutex";
             bool createdNew;
 
             mutex = new Mutex(true, appName, out createdNew);
 
             if (!createdNew)
             {
-                IntPtr existingWindow = FindWindow(null, "Labtech Scheduler v1.4");
+                IntPtr existingWindow = FindWindow(null, "Labtech Scheduler v1.5");
                 if (existingWindow != IntPtr.Zero)
                 {
                     ShowWindow(existingWindow, SW_RESTORE);
