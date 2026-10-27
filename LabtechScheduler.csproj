@@ -7,7 +7,7 @@
     <ProjectGuid>{A8B2C3D4-E5F6-4A1B-8C2D-3E4F5A6B7C8D}</ProjectGuid>
     <OutputType>WinExe</OutputType>
     <RootNamespace>LabtechScheduler</RootNamespace>
-    <AssemblyName>LabtechScheduler</AssemblyName>
+    <AssemblyName>LabtechScheduler_v1.3</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -46,6 +46,10 @@
   <ItemGroup>
     <PackageReference Include="ExcelDataReader" Version="3.6.0" />
     <PackageReference Include="ExcelDataReader.DataSet" Version="3.6.0" />
+    <PackageReference Include="Costura.Fody" Version="5.7.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
