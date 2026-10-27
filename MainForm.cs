@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -20,20 +23,22 @@ namespace LabtechScheduler
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
-        // Core UI Controls
+        // Core Controls
         private RadioButton rbNight;
         private RadioButton rbDay;
-        private Label lblExcel;
+        private ComboBox cbDaySelect;
+        private Label lblFile;
         private Label lblDb;
         private Label lblStatus;
         private DataGridView gridPreview;
         private Button btnAutoFill;
 
-        private string excelPath = "";
+        private string loadedFilePath = "";
+        private bool isImageFile = false;
         private string dbPath = "Background Database HORIZON.txt";
         private List<string> dbEntries = new List<string>();
 
-        // Parsing Constants
+        // Parsing Categories
         private readonly string[] Gangways = { "ensenada", "mazatlan", "puerto vallarta", "la paz", "cabo", "cabo san lucas" };
         private readonly string[] Decks = { "deck", "waterworks", "water works", "slide", "slides", "skyride", "sky ride", "lido rail", "rail", "ropes", "water in the back" };
         private readonly string[] Costumes = { "elephant", "ellie", "duck", "ducky", "pirate" };
@@ -45,92 +50,112 @@ namespace LabtechScheduler
         public MainForm()
         {
             InitializeComponent();
-            ApplyCustomSchedulerIcon();
+            ApplyLtsIcon();
             LoadDatabase();
+            EnableDragAndDrop();
         }
 
         private void InitializeComponent()
         {
-            this.Text = "Labtech Scheduler";
-            this.Size = new Size(650, 620);
+            this.Text = "Labtech Scheduler v1.3";
+            this.Size = new Size(660, 650);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
 
-            // 1. Shift Selection Group
+            // 1. Shift & Day Selection Group
             GroupBox gbShift = new GroupBox
             {
-                Text = "1. Event Shift Toggle",
+                Text = "1. Shift & Cruise Day Selection",
                 Location = new Point(15, 10),
-                Size = new Size(605, 65)
+                Size = new Size(615, 75)
             };
 
             rbNight = new RadioButton
             {
-                Text = "🌙 Night Event (Portraits, Dining Rooms, 5 PM - 10 PM)",
-                Location = new Point(20, 25),
+                Text = "🌙 Night Event (Portraits, Dining)",
+                Location = new Point(15, 22),
                 AutoSize = true,
                 Checked = true
             };
-            rbNight.CheckedChanged += (s, e) => { if (rbNight.Checked) ParseAndPreview(); };
+            rbNight.CheckedChanged += (s, e) => { if (rbNight.Checked) ParseCurrentFile(); };
 
             rbDay = new RadioButton
             {
-                Text = "☀️ Day Event (Deck, Waterworks, Gangway, Costumes, Before 4 PM)",
-                Location = new Point(20, 42),
+                Text = "☀️ Day Event (Deck, Gangway, Costumes)",
+                Location = new Point(15, 45),
                 AutoSize = true
             };
-            rbDay.CheckedChanged += (s, e) => { if (rbDay.Checked) ParseAndPreview(); };
+            rbDay.CheckedChanged += (s, e) => { if (rbDay.Checked) ParseCurrentFile(); };
+
+            Label lblDayPick = new Label
+            {
+                Text = "Target Day / Tab:",
+                Location = new Point(350, 22),
+                AutoSize = true
+            };
+
+            cbDaySelect = new ComboBox
+            {
+                Location = new Point(350, 42),
+                Size = new Size(245, 25),
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            cbDaySelect.Items.AddRange(new object[] { "Auto / Default", "Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7", "Day 8" });
+            cbDaySelect.SelectedIndex = 0;
+            cbDaySelect.SelectedIndexChanged += (s, e) => ParseCurrentFile();
 
             gbShift.Controls.Add(rbNight);
             gbShift.Controls.Add(rbDay);
+            gbShift.Controls.Add(lblDayPick);
+            gbShift.Controls.Add(cbDaySelect);
 
-            // 2. Schedule Excel Group
-            GroupBox gbExcel = new GroupBox
+            // 2. Schedule File Input Group (Drag and Drop Supported)
+            GroupBox gbFile = new GroupBox
             {
-                Text = "2. Daily Excel Schedule (.xlsx)",
-                Location = new Point(15, 80),
-                Size = new Size(605, 60)
+                Text = "2. Schedule Source (.xlsx, .jpg, .png) [Drag & Drop Supported]",
+                Location = new Point(15, 90),
+                Size = new Size(615, 60)
             };
 
-            lblExcel = new Label
+            lblFile = new Label
             {
-                Text = "No Excel schedule file loaded...",
+                Text = "Drag & drop an Excel file or Photo here, or browse...",
                 Location = new Point(15, 25),
-                Size = new Size(460, 20),
+                Size = new Size(470, 20),
                 ForeColor = Color.Gray
             };
 
-            Button btnBrowseExcel = new Button
+            Button btnBrowse = new Button
             {
-                Text = "Browse Excel",
-                Location = new Point(485, 20),
+                Text = "Browse File",
+                Location = new Point(495, 20),
                 Size = new Size(105, 28)
             };
-            btnBrowseExcel.Click += BrowseExcel_Click;
+            btnBrowse.Click += BrowseFile_Click;
 
-            gbExcel.Controls.Add(lblExcel);
-            gbExcel.Controls.Add(btnBrowseExcel);
+            gbFile.Controls.Add(lblFile);
+            gbFile.Controls.Add(btnBrowse);
 
             // 3. Database Manager Group
             GroupBox gbDb = new GroupBox
             {
                 Text = "3. Background Database (.txt)",
-                Location = new Point(15, 145),
-                Size = new Size(605, 60)
+                Location = new Point(15, 155),
+                Size = new Size(615, 60)
             };
 
             lblDb = new Label
             {
                 Text = "Database: Background Database HORIZON.txt (0 items)",
                 Location = new Point(15, 25),
-                Size = new Size(360, 20)
+                Size = new Size(370, 20)
             };
 
             Button btnAddEntry = new Button
             {
                 Text = "+ Add Entry",
-                Location = new Point(380, 20),
+                Location = new Point(390, 20),
                 Size = new Size(100, 28)
             };
             btnAddEntry.Click += AddEntry_Click;
@@ -138,7 +163,7 @@ namespace LabtechScheduler
             Button btnChangeDb = new Button
             {
                 Text = "Change File",
-                Location = new Point(485, 20),
+                Location = new Point(495, 20),
                 Size = new Size(105, 28)
             };
             btnChangeDb.Click += ChangeDb_Click;
@@ -147,22 +172,22 @@ namespace LabtechScheduler
             gbDb.Controls.Add(btnAddEntry);
             gbDb.Controls.Add(btnChangeDb);
 
-            // 4. Preview Grid Group
+            // 4. Preview & Editable Grid
             GroupBox gbPreview = new GroupBox
             {
-                Text = "4. Schedule Preview (What will be auto-filled)",
-                Location = new Point(15, 210),
-                Size = new Size(605, 275)
+                Text = "4. Schedule Preview (Editable - Double-click any cell to adjust)",
+                Location = new Point(15, 220),
+                Size = new Size(615, 285)
             };
 
             gridPreview = new DataGridView
             {
                 Location = new Point(15, 22),
-                Size = new Size(575, 240),
-                ReadOnly = true,
+                Size = new Size(585, 250),
+                ReadOnly = false,
                 AllowUserToAddRows = false,
                 RowHeadersVisible = false,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                SelectionMode = DataGridViewSelectionMode.CellSelect,
                 BackgroundColor = Color.White
             };
 
@@ -170,18 +195,19 @@ namespace LabtechScheduler
             gridPreview.Columns.Add("Col2", "Role Code (Col 2)");
             gridPreview.Columns.Add("Col3", "Schedule / Station (Col 3)");
 
+            gridPreview.Columns[0].ReadOnly = true;
             gridPreview.Columns[0].Width = 70;
             gridPreview.Columns[1].Width = 140;
-            gridPreview.Columns[2].Width = 360;
+            gridPreview.Columns[2].Width = 370;
 
             gbPreview.Controls.Add(gridPreview);
 
             // 5. Actions / Status
             lblStatus = new Label
             {
-                Text = "Ready. Select an Excel file and shift.",
-                Location = new Point(15, 495),
-                Size = new Size(605, 20),
+                Text = "Ready. Drag an Excel schedule file or photo here to begin.",
+                Location = new Point(15, 510),
+                Size = new Size(615, 20),
                 TextAlign = ContentAlignment.MiddleCenter,
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 ForeColor = Color.DarkSlateGray
@@ -190,8 +216,8 @@ namespace LabtechScheduler
             btnAutoFill = new Button
             {
                 Text = "⚡ AUTO-FILL INTO TALLY BOARD ⚡",
-                Location = new Point(15, 520),
-                Size = new Size(605, 45),
+                Location = new Point(15, 535),
+                Size = new Size(615, 45),
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 BackColor = Color.FromArgb(0, 122, 204),
                 ForeColor = Color.White,
@@ -200,36 +226,132 @@ namespace LabtechScheduler
             btnAutoFill.Click += AutoFill_Click;
 
             this.Controls.Add(gbShift);
-            this.Controls.Add(gbExcel);
+            this.Controls.Add(gbFile);
             this.Controls.Add(gbDb);
             this.Controls.Add(gbPreview);
             this.Controls.Add(lblStatus);
             this.Controls.Add(btnAutoFill);
         }
 
-        private void ApplyCustomSchedulerIcon()
+        private void ApplyLtsIcon()
         {
-            // Dynamically generate a clean "Lab Scheduler" icon in memory
             using (Bitmap bmp = new Bitmap(48, 48))
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-                // Calendar Body
-                g.FillRectangle(Brushes.White, 4, 8, 40, 36);
-                g.FillRectangle(new SolidBrush(Color.FromArgb(0, 120, 215)), 4, 8, 40, 12);
-                g.DrawRectangle(new Pen(Color.FromArgb(30, 30, 30), 2), 4, 8, 40, 36);
+                using (GraphicsPath path = new GraphicsPath())
+                {
+                    int radius = 10;
+                    path.AddArc(2, 2, radius, radius, 180, 90);
+                    path.AddArc(46 - radius, 2, radius, radius, 270, 90);
+                    path.AddArc(46 - radius, 46 - radius, radius, radius, 0, 90);
+                    path.AddArc(2, 46 - radius, radius, radius, 90, 90);
+                    path.CloseFigure();
 
-                // Clock Overlay on bottom right
-                g.FillEllipse(new SolidBrush(Color.FromArgb(255, 185, 0)), 22, 22, 22, 22);
-                g.DrawEllipse(new Pen(Color.FromArgb(40, 40, 40), 2), 22, 22, 22, 22);
+                    using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(24, 30, 44)))
+                    {
+                        g.FillPath(bgBrush, path);
+                    }
+                    using (Pen borderPen = new Pen(Color.FromArgb(0, 150, 255), 2))
+                    {
+                        g.DrawPath(borderPen, path);
+                    }
+                }
 
-                // Clock Hands
-                g.DrawLine(new Pen(Color.FromArgb(30, 30, 30), 2), 33, 33, 33, 26);
-                g.DrawLine(new Pen(Color.FromArgb(30, 30, 30), 2), 33, 33, 39, 33);
+                using (Font font = new Font("Segoe UI", 13, FontStyle.Bold, GraphicsUnit.Pixel))
+                using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                {
+                    g.DrawString("LTS", font, Brushes.White, new RectangleF(0, 0, 48, 48), sf);
+                }
 
                 IntPtr hIcon = bmp.GetHicon();
                 this.Icon = Icon.FromHandle(hIcon);
+            }
+        }
+
+        private void EnableDragAndDrop()
+        {
+            this.AllowDrop = true;
+            this.DragEnter += (s, e) =>
+            {
+                if (e.Data.GetDataPresent(DataFormats.FileDrop))
+                    e.Effect = DragDropEffects.Copy;
+            };
+
+            this.DragDrop += (s, e) =>
+            {
+                string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+                if (files != null && files.Length > 0)
+                {
+                    ProcessDroppedFile(files[0]);
+                }
+            };
+        }
+
+        private void ProcessDroppedFile(string filePath)
+        {
+            string ext = Path.GetExtension(filePath).ToLower();
+
+            if (ext == ".xlsx" || ext == ".xls")
+            {
+                isImageFile = false;
+                loadedFilePath = filePath;
+                lblFile.Text = Path.GetFileName(loadedFilePath);
+                lblFile.ForeColor = Color.Black;
+                PopulateSheetsFromExcel(loadedFilePath);
+                ParseCurrentFile();
+            }
+            else if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp")
+            {
+                isImageFile = true;
+                loadedFilePath = filePath;
+                lblFile.Text = "[Photo] " + Path.GetFileName(loadedFilePath);
+                lblFile.ForeColor = Color.Black;
+                ParseCurrentFile();
+            }
+            else if (ext == ".txt")
+            {
+                dbPath = filePath;
+                LoadDatabase();
+                ParseCurrentFile();
+                MessageBox.Show($"Loaded database: {Path.GetFileName(dbPath)}", "Database Updated", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        private void PopulateSheetsFromExcel(string path)
+        {
+            try
+            {
+                using (var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = ExcelReaderFactory.CreateReader(stream))
+                {
+                    var result = reader.AsDataSet();
+                    if (result.Tables.Count > 1)
+                    {
+                        cbDaySelect.Items.Clear();
+                        cbDaySelect.Items.Add("Auto / Default");
+                        foreach (DataTable t in result.Tables)
+                        {
+                            cbDaySelect.Items.Add(t.TableName);
+                        }
+                        cbDaySelect.SelectedIndex = 0;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void BrowseFile_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Filter = "Schedule Files|*.xlsx;*.xls;*.jpg;*.jpeg;*.png;*.bmp|Excel Files|*.xlsx;*.xls|Images|*.jpg;*.jpeg;*.png;*.bmp|All Files|*.*";
+                if (ofd.ShowDialog() == DialogResult.OK)
+                {
+                    ProcessDroppedFile(ofd.FileName);
+                }
             }
         }
 
@@ -251,21 +373,6 @@ namespace LabtechScheduler
             lblDb.Text = $"Database: {Path.GetFileName(dbPath)} ({dbEntries.Count} items)";
         }
 
-        private void BrowseExcel_Click(object sender, EventArgs e)
-        {
-            using (OpenFileDialog ofd = new OpenFileDialog())
-            {
-                ofd.Filter = "Excel Files|*.xlsx;*.xls|All Files|*.*";
-                if (ofd.ShowDialog() == DialogResult.OK)
-                {
-                    excelPath = ofd.FileName;
-                    lblExcel.Text = Path.GetFileName(excelPath);
-                    lblExcel.ForeColor = Color.Black;
-                    ParseAndPreview();
-                }
-            }
-        }
-
         private void ChangeDb_Click(object sender, EventArgs e)
         {
             using (OpenFileDialog ofd = new OpenFileDialog())
@@ -275,7 +382,7 @@ namespace LabtechScheduler
                 {
                     dbPath = ofd.FileName;
                     LoadDatabase();
-                    ParseAndPreview();
+                    ParseCurrentFile();
                     MessageBox.Show($"Loaded {dbEntries.Count} items from {Path.GetFileName(dbPath)}.", "Database Updated", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
             }
@@ -288,7 +395,7 @@ namespace LabtechScheduler
             {
                 File.AppendAllText(dbPath, Environment.NewLine + input.Trim());
                 LoadDatabase();
-                ParseAndPreview();
+                ParseCurrentFile();
                 MessageBox.Show($"Added '{input.Trim()}' to {Path.GetFileName(dbPath)}!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
@@ -321,7 +428,6 @@ namespace LabtechScheduler
             if (string.IsNullOrWhiteSpace(query)) return "";
             string clean = query.Trim().ToLower();
 
-            // 1. Direct contains or code match
             foreach (string entry in dbEntries)
             {
                 string[] parts = entry.Split(new[] { ',' }, 2);
@@ -335,7 +441,6 @@ namespace LabtechScheduler
                     return entry;
             }
 
-            // 2. Levenshtein / Similarity match (typo tolerance)
             double bestScore = 0.0;
             string bestMatch = "";
 
@@ -381,29 +486,80 @@ namespace LabtechScheduler
             return 1.0 - ((double)d[n, m] / maxLen);
         }
 
-        private void ParseAndPreview()
+        private void ParseCurrentFile()
         {
-            if (string.IsNullOrEmpty(excelPath) || !File.Exists(excelPath)) return;
+            if (string.IsNullOrEmpty(loadedFilePath) || !File.Exists(loadedFilePath)) return;
 
+            if (isImageFile)
+            {
+                ParseImageFile();
+            }
+            else
+            {
+                ParseExcelFile();
+            }
+        }
+
+        private void ParseExcelFile()
+        {
             currentSchedule.Clear();
             gridPreview.Rows.Clear();
 
             bool isNight = rbNight.Checked;
-            int startRow = isNight ? 7 : 0;
-            int endRow = isNight ? 12 : 4;
+            string selectedDay = cbDaySelect.SelectedItem?.ToString() ?? "Auto / Default";
 
             try
             {
-                using (var stream = File.Open(excelPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var stream = File.Open(loadedFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 using (var reader = ExcelReaderFactory.CreateReader(stream))
                 {
                     var result = reader.AsDataSet();
                     DataTable table = result.Tables[0];
 
-                    // Read photographers from columns 2 to end
+                    // Check if user picked a specific sheet by name
+                    if (result.Tables.Contains(selectedDay))
+                    {
+                        table = result.Tables[selectedDay];
+                    }
+                    else if (selectedDay.StartsWith("Day ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string targetNum = selectedDay.Substring(4).Trim();
+                        foreach (DataTable t in result.Tables)
+                        {
+                            if (t.TableName.IndexOf(targetNum, StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                table = t;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Find Day offset if days are stacked on one sheet
+                    int offsetRow = 0;
+                    if (selectedDay.StartsWith("Day ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string dayHeaderKey = "DAY " + selectedDay.Substring(4).Trim();
+                        for (int r = 0; r < table.Rows.Count; r++)
+                        {
+                            for (int c = 0; c < Math.Min(table.Columns.Count, 3); c++)
+                            {
+                                string val = table.Rows[r][c]?.ToString()?.ToUpper() ?? "";
+                                if (val.Contains(dayHeaderKey) || val.Contains("TIME-" + dayHeaderKey))
+                                {
+                                    offsetRow = r;
+                                    break;
+                                }
+                            }
+                            if (offsetRow > 0) break;
+                        }
+                    }
+
+                    int startRow = offsetRow + (isNight ? 7 : 0);
+                    int endRow = offsetRow + (isNight ? 12 : 4);
+
                     for (int c = 2; c < table.Columns.Count; c++)
                     {
-                        string colHeader = table.Rows[0][c]?.ToString() ?? "";
+                        string colHeader = table.Rows[offsetRow][c]?.ToString() ?? "";
                         if (string.IsNullOrWhiteSpace(colHeader))
                             colHeader = table.Columns[c].ColumnName;
 
@@ -425,31 +581,137 @@ namespace LabtechScheduler
                     }
                 }
 
-                // Populate Grid for P01 to P30
-                int activeCount = 0;
-                for (int i = 1; i <= 30; i++)
-                {
-                    string role = "";
-                    string station = "";
-
-                    if (currentSchedule.ContainsKey(i))
-                    {
-                        role = currentSchedule[i].Item1;
-                        station = currentSchedule[i].Item2;
-                    }
-
-                    gridPreview.Rows.Add($"P{i:D2}", role, station);
-                    if (!string.IsNullOrEmpty(role)) activeCount++;
-                }
-
-                string shiftName = isNight ? "Night Event" : "Day Event";
-                lblStatus.Text = $"{shiftName} Loaded: {activeCount} photographers assigned.";
-                lblStatus.ForeColor = Color.DarkGreen;
+                DisplayScheduleInGrid();
             }
             catch (Exception ex)
             {
                 MessageBox.Show("Error reading Excel: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void ParseImageFile()
+        {
+            lblStatus.Text = "Scanning photo with Windows OCR...";
+            lblStatus.ForeColor = Color.Blue;
+            this.Update();
+
+            string fullText = RunWindowsNativeOcr(loadedFilePath);
+            if (string.IsNullOrWhiteSpace(fullText))
+            {
+                MessageBox.Show("Could not extract text from the photo. Make sure the schedule is clear and visible.", "OCR Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                lblStatus.Text = "OCR scan yielded no text. Try a clearer photo.";
+                lblStatus.ForeColor = Color.Red;
+                return;
+            }
+
+            currentSchedule.Clear();
+            gridPreview.Rows.Clear();
+
+            bool isNight = rbNight.Checked;
+            string[] lines = fullText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                Match m = Regex.Match(line, @"\bP(\d+)\b", RegexOptions.IgnoreCase);
+                if (m.Success)
+                {
+                    int pNum = int.Parse(m.Groups[1].Value);
+                    List<string> contextLines = new List<string> { line };
+                    for (int j = 1; j <= 3 && (i + j) < lines.Length; j++)
+                    {
+                        contextLines.Add(lines[i + j]);
+                    }
+
+                    Tuple<string, string> parsed = DetermineRoleAndStation(pNum, contextLines, isNight);
+                    if (!string.IsNullOrEmpty(parsed.Item1) || !string.IsNullOrEmpty(parsed.Item2))
+                    {
+                        currentSchedule[pNum] = parsed;
+                    }
+                }
+            }
+
+            DisplayScheduleInGrid();
+        }
+
+        private string RunWindowsNativeOcr(string imagePath)
+        {
+            try
+            {
+                string script = @"
+$file = [System.IO.Path]::GetFullPath('" + imagePath.Replace("'", "''") + @"')
+if (-not (Test-Path $file)) { exit }
+[Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime] | Out-Null
+[Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime] | Out-Null
+$asyncOp = [Windows.Storage.StorageFile]::GetFileFromPathAsync($file)
+$storageFile = $asyncOp.GetAwaiter().GetResult()
+$streamOp = $storageFile.OpenAsync([Windows.Storage.FileAccessMode]::Read)
+$stream = $streamOp.GetAwaiter().GetResult()
+$decoderOp = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)
+$decoder = $decoderOp.GetAwaiter().GetResult()
+$bitmapOp = $decoder.GetSoftwareBitmapAsync()
+$bitmap = $bitmapOp.GetAwaiter().GetResult()
+$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+if ($engine -eq $null) {
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new('en-US'))
+}
+$ocrOp = $engine.RecognizeAsync($bitmap)
+$result = $ocrOp.GetAwaiter().GetResult()
+foreach ($line in $result.Lines) {
+    Write-Output $line.Text
+}
+";
+                string tempPs1 = Path.Combine(Path.GetTempPath(), "tally_ocr_" + Guid.NewGuid().ToString("N") + ".ps1");
+                File.WriteAllText(tempPs1, script, Encoding.UTF8);
+
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + tempPs1 + "\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using (Process proc = Process.Start(psi))
+                {
+                    string output = proc.StandardOutput.ReadToEnd();
+                    proc.WaitForExit(10000);
+
+                    try { File.Delete(tempPs1); } catch { }
+                    return output;
+                }
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private void DisplayScheduleInGrid()
+        {
+            gridPreview.Rows.Clear();
+            int activeCount = 0;
+
+            for (int i = 1; i <= 30; i++)
+            {
+                string role = "";
+                string station = "";
+
+                if (currentSchedule.ContainsKey(i))
+                {
+                    role = currentSchedule[i].Item1;
+                    station = currentSchedule[i].Item2;
+                }
+
+                gridPreview.Rows.Add($"P{i:D2}", role, station);
+                if (!string.IsNullOrEmpty(role)) activeCount++;
+            }
+
+            string shiftName = rbNight.Checked ? "Night Event" : "Day Event";
+            lblStatus.Text = $"{shiftName} Loaded: {activeCount} photographers assigned. Double-click any cell to edit.";
+            lblStatus.ForeColor = Color.DarkGreen;
         }
 
         private Tuple<string, string> DetermineRoleAndStation(int pNum, List<string> tasks, bool isNight)
@@ -519,7 +781,6 @@ namespace LabtechScheduler
             else
             {
                 // DAY EVENT (Before 4 PM)
-                // 1. Costumes
                 foreach (string c in Costumes)
                 {
                     if (combined.Contains(c))
@@ -531,7 +792,6 @@ namespace LabtechScheduler
                     }
                 }
 
-                // 2. Gangways
                 foreach (string gw in Gangways)
                 {
                     if (combined.Contains(gw))
@@ -543,7 +803,6 @@ namespace LabtechScheduler
                     }
                 }
 
-                // 3. Decks / Outdoors
                 foreach (string dk in Decks)
                 {
                     if (combined.Contains(dk))
@@ -555,7 +814,6 @@ namespace LabtechScheduler
                     }
                 }
 
-                // 4. Portrait/Backdrop in Day
                 foreach (string t in tasks)
                 {
                     if (!ContainsAny(t.ToLower(), NonShooting) && !ContainsAny(t.ToLower(), new[] { "img", "target", "organise", "couples & singles" }))
@@ -589,10 +847,13 @@ namespace LabtechScheduler
 
         private async void AutoFill_Click(object sender, EventArgs e)
         {
-            if (currentSchedule.Count == 0)
+            // Sync any manual edits made in the preview grid
+            for (int r = 0; r < gridPreview.Rows.Count; r++)
             {
-                MessageBox.Show("Please select an Excel schedule file first.", "No Data", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                int pNum = r + 1;
+                string role = gridPreview.Rows[r].Cells[1].Value?.ToString() ?? "";
+                string station = gridPreview.Rows[r].Cells[2].Value?.ToString() ?? "";
+                currentSchedule[pNum] = Tuple.Create(role, station);
             }
 
             string shift = rbNight.Checked ? "NIGHT" : "DAY";
@@ -616,23 +877,15 @@ namespace LabtechScheduler
 
             await Task.Delay(4000);
 
-            // Attempt to bring TallyBoard to the front automatically
-            IntPtr tallyHwnd = FindWindow(null, "SCHEDULER TALLY BOARD V5.93");
-            if (tallyHwnd == IntPtr.Zero)
+            // Focus Tally Board Window
+            foreach (var proc in Process.GetProcesses())
             {
-                // Try partial search or just foreground window
-                foreach (var proc in System.Diagnostics.Process.GetProcesses())
+                if (!string.IsNullOrEmpty(proc.MainWindowTitle) &&
+                    proc.MainWindowTitle.IndexOf("SCHEDULER TALLY BOARD", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    if (proc.MainWindowTitle.Contains("SCHEDULER TALLY BOARD"))
-                    {
-                        SetForegroundWindow(proc.MainWindowHandle);
-                        break;
-                    }
+                    SetForegroundWindow(proc.MainWindowHandle);
+                    break;
                 }
-            }
-            else
-            {
-                SetForegroundWindow(tallyHwnd);
             }
 
             await Task.Delay(500);
@@ -651,7 +904,7 @@ namespace LabtechScheduler
                     station = currentSchedule[i].Item2;
                 }
 
-                // 1. Column 2 (Role)
+                // Column 2: Role
                 if (!string.IsNullOrEmpty(role))
                 {
                     Clipboard.SetText(role);
@@ -660,7 +913,7 @@ namespace LabtechScheduler
                 await Task.Delay(40);
                 SendKeys.SendWait("{TAB}");
 
-                // 2. Column 3 (Station)
+                // Column 3: Station
                 if (!string.IsNullOrEmpty(station))
                 {
                     Clipboard.SetText(station);
@@ -669,7 +922,7 @@ namespace LabtechScheduler
                 await Task.Delay(40);
                 SendKeys.SendWait("{TAB}");
 
-                // 3. Move past Column 4 to next row
+                // Column 4: Move past dropdown to next row
                 SendKeys.SendWait("{TAB}");
                 await Task.Delay(30);
             }
