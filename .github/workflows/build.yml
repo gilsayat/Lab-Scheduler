@@ -23,7 +23,7 @@ jobs:
       run: nuget restore LabtechScheduler.csproj
 
     - name: Build Solution
-      run: msbuild LabtechScheduler.csproj /p:Configuration=Release /p:Platform="Any CPU"
+      run: msbuild LabtechScheduler.csproj /p:Configuration=Release /p:Platform="AnyCPU"
 
     - name: Upload Executable Artifact
       uses: actions/upload-artifact@v4
