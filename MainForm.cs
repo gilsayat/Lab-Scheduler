@@ -51,13 +51,26 @@ namespace LabtechScheduler
         private Label lblStatus;
         private DataGridView gridPreview;
         private Button btnAutoFill;
+        private Button btnTestCalib;
+
+        // Calibration Inputs
+        private NumericUpDown numOffsetY;
+        private NumericUpDown numCol2X;
+        private NumericUpDown numCol3X;
 
         private string loadedFilePath = "";
         private bool isImageFile = false;
         private string dbPath = "Background Database HORIZON.txt";
         private string rosterPath = "PhotographerRoster.txt";
+        private string calibConfigPath = "CalibrationSettings.txt";
         private List<string> dbEntries = new List<string>();
         private Dictionary<string, int> customNameMappings = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // Calibrated Coordinates (Relative to TallyBoard Window Top-Left)
+        private int cfgOffsetY = 138;   // Vertical start position for Row P01
+        private int cfgCol2X = 260;     // Horizontal center of Column 2 (Role)
+        private int cfgCol3X = 460;     // Horizontal center of Column 3 (Station)
+        private const int rowHeight = 24;
 
         private readonly string[] PhysicalLocations = {
             "steakhouse", "coffee shop", "pig & anchor", "pig and anchor", "pigandanchor",
@@ -88,6 +101,7 @@ namespace LabtechScheduler
             TryFindDatabaseFile();
             LoadDatabase();
             LoadRosterSettings();
+            LoadCalibrationSettings();
             EnableDragAndDrop();
         }
 
@@ -99,12 +113,55 @@ namespace LabtechScheduler
                 dbPath = "Background Database HORIZON.txt";
         }
 
+        private void LoadCalibrationSettings()
+        {
+            if (File.Exists(calibConfigPath))
+            {
+                try
+                {
+                    string[] lines = File.ReadAllLines(calibConfigPath);
+                    foreach (string line in lines)
+                    {
+                        string[] p = line.Split('=');
+                        if (p.Length == 2)
+                        {
+                            int val;
+                            if (int.TryParse(p[1].Trim(), out val))
+                            {
+                                if (p[0].Trim().Equals("OffsetY", StringComparison.OrdinalIgnoreCase)) cfgOffsetY = val;
+                                if (p[0].Trim().Equals("Col2X", StringComparison.OrdinalIgnoreCase)) cfgCol2X = val;
+                                if (p[0].Trim().Equals("Col3X", StringComparison.OrdinalIgnoreCase)) cfgCol3X = val;
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            numOffsetY.Value = Math.Max(0, Math.Min(1000, cfgOffsetY));
+            numCol2X.Value = Math.Max(0, Math.Min(1000, cfgCol2X));
+            numCol3X.Value = Math.Max(0, Math.Min(1000, cfgCol3X));
+        }
+
+        private void SaveCalibrationSettings()
+        {
+            try
+            {
+                cfgOffsetY = (int)numOffsetY.Value;
+                cfgCol2X = (int)numCol2X.Value;
+                cfgCol3X = (int)numCol3X.Value;
+
+                string content = $"OffsetY={cfgOffsetY}\r\nCol2X={cfgCol2X}\r\nCol3X={cfgCol3X}\r\n";
+                File.WriteAllText(calibConfigPath, content);
+            }
+            catch { }
+        }
+
         private void LoadRosterSettings()
         {
             customNameMappings.Clear();
             if (!File.Exists(rosterPath))
             {
-                // Default setup: Gil -> 14, Sanyukta -> 15
                 customNameMappings["Gil"] = 14;
                 customNameMappings["Sanyukta"] = 15;
                 SaveRosterSettings();
@@ -138,8 +195,8 @@ namespace LabtechScheduler
 
         private void InitializeComponent()
         {
-            this.Text = "Labtech Scheduler v1.6";
-            this.Size = new Size(660, 650);
+            this.Text = "Labtech Scheduler v1.7";
+            this.Size = new Size(660, 710);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
@@ -267,13 +324,13 @@ namespace LabtechScheduler
             {
                 Text = "4. Schedule Preview (Editable - Double-click any cell to adjust)",
                 Location = new Point(15, 220),
-                Size = new Size(615, 285)
+                Size = new Size(615, 260)
             };
 
             gridPreview = new DataGridView
             {
                 Location = new Point(15, 22),
-                Size = new Size(585, 250),
+                Size = new Size(585, 225),
                 ReadOnly = false,
                 AllowUserToAddRows = false,
                 RowHeadersVisible = false,
@@ -292,11 +349,51 @@ namespace LabtechScheduler
 
             gbPreview.Controls.Add(gridPreview);
 
-            // 5. Actions / Status
+            // 5. Calibration Panel
+            GroupBox gbCalib = new GroupBox
+            {
+                Text = "5. Click Coordinates Alignment & Calibration",
+                Location = new Point(15, 485),
+                Size = new Size(615, 60)
+            };
+
+            Label lblY = new Label { Text = "Start Y:", Location = new Point(15, 25), AutoSize = true };
+            numOffsetY = new NumericUpDown { Location = new Point(65, 23), Width = 55, Maximum = 1000, Minimum = 0, Value = 138 };
+            numOffsetY.ValueChanged += (s, e) => SaveCalibrationSettings();
+
+            Label lblC2 = new Label { Text = "Col 2 X:", Location = new Point(135, 25), AutoSize = true };
+            numCol2X = new NumericUpDown { Location = new Point(185, 23), Width = 55, Maximum = 1000, Minimum = 0, Value = 260 };
+            numCol2X.ValueChanged += (s, e) => SaveCalibrationSettings();
+
+            Label lblC3 = new Label { Text = "Col 3 X:", Location = new Point(255, 25), AutoSize = true };
+            numCol3X = new NumericUpDown { Location = new Point(305, 23), Width = 55, Maximum = 1000, Minimum = 0, Value = 460 };
+            numCol3X.ValueChanged += (s, e) => SaveCalibrationSettings();
+
+            btnTestCalib = new Button
+            {
+                Text = "🎯 Test Calibration",
+                Location = new Point(410, 20),
+                Size = new Size(190, 28),
+                BackColor = Color.FromArgb(70, 80, 95),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
+            };
+            btnTestCalib.Click += TestCalibration_Click;
+
+            gbCalib.Controls.Add(lblY);
+            gbCalib.Controls.Add(numOffsetY);
+            gbCalib.Controls.Add(lblC2);
+            gbCalib.Controls.Add(numCol2X);
+            gbCalib.Controls.Add(lblC3);
+            gbCalib.Controls.Add(numCol3X);
+            gbCalib.Controls.Add(btnTestCalib);
+
+            // 6. Actions / Status
             lblStatus = new Label
             {
                 Text = "Ready. Drag an Excel schedule file or photo here to begin.",
-                Location = new Point(15, 510),
+                Location = new Point(15, 550),
                 Size = new Size(615, 20),
                 TextAlign = ContentAlignment.MiddleCenter,
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
@@ -306,7 +403,7 @@ namespace LabtechScheduler
             btnAutoFill = new Button
             {
                 Text = "⚡ AUTO-FILL INTO TALLY BOARD (CLICK-BASED) ⚡",
-                Location = new Point(15, 535),
+                Location = new Point(15, 575),
                 Size = new Size(615, 45),
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 BackColor = Color.FromArgb(0, 122, 204),
@@ -319,8 +416,80 @@ namespace LabtechScheduler
             this.Controls.Add(gbFile);
             this.Controls.Add(gbDb);
             this.Controls.Add(gbPreview);
+            this.Controls.Add(gbCalib);
             this.Controls.Add(lblStatus);
             this.Controls.Add(btnAutoFill);
+        }
+
+        private async void TestCalibration_Click(object sender, EventArgs e)
+        {
+            var confirm = MessageBox.Show(
+                "🎯 Calibration Visual Test:\n\n" +
+                "1. Click OK.\n" +
+                "2. During the 3-second countdown, ensure TallyBoard is visible on screen.\n" +
+                "3. The mouse will automatically move to Row P01 (Column 2) for 2 seconds, then to (Column 3) for 2 seconds.\n" +
+                "4. Check if the mouse sits squarely inside the boxes!",
+                "Calibration Test",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Information
+            );
+
+            if (confirm != DialogResult.OK) return;
+
+            lblStatus.Text = "Targeting TallyBoard in 3 seconds... Keep hands off mouse!";
+            lblStatus.ForeColor = Color.Red;
+            btnTestCalib.Enabled = false;
+
+            await Task.Delay(3000);
+
+            IntPtr tallyHwnd = FindTallyBoardWindow();
+            if (tallyHwnd == IntPtr.Zero)
+            {
+                MessageBox.Show("Could not find TallyBoard. Please open it first.", "Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                btnTestCalib.Enabled = true;
+                return;
+            }
+
+            RECT rect;
+            GetWindowRect(tallyHwnd, out rect);
+            int windowX = rect.Left;
+            int windowY = rect.Top;
+
+            int targetY = windowY + (int)numOffsetY.Value;
+            int targetCol2X = windowX + (int)numCol2X.Value;
+            int targetCol3X = windowX + (int)numCol3X.Value;
+
+            // Step 1: Hover Col 2
+            lblStatus.Text = "Testing Column 2 (Role)... Check where mouse is pointing!";
+            lblStatus.ForeColor = Color.Blue;
+            SetCursorPos(targetCol2X, targetY);
+            await Task.Delay(2000);
+
+            // Step 2: Hover Col 3
+            lblStatus.Text = "Testing Column 3 (Station)... Check where mouse is pointing!";
+            lblStatus.ForeColor = Color.DarkGreen;
+            SetCursorPos(targetCol3X, targetY);
+            await Task.Delay(2000);
+
+            btnTestCalib.Enabled = true;
+            lblStatus.Text = "Calibration test complete. Adjust numbers if it was slightly off.";
+            lblStatus.ForeColor = Color.DarkSlateGray;
+        }
+
+        private IntPtr FindTallyBoardWindow()
+        {
+            Process[] procs = Process.GetProcessesByName("TallyBoard");
+            if (procs.Length == 0)
+                procs = Process.GetProcessesByName("tallyboard");
+
+            if (procs.Length > 0)
+            {
+                IntPtr hwnd = procs[0].MainWindowHandle;
+                SetForegroundWindow(hwnd);
+                return hwnd;
+            }
+
+            return GetForegroundWindow();
         }
 
         private void OpenRosterSettingsDialog()
@@ -345,7 +514,6 @@ namespace LabtechScheduler
             Dictionary<int, TextBox> boxes = new Dictionary<int, TextBox>();
             int yPos = 10;
 
-            // Invert lookup
             Dictionary<int, string> slotToName = new Dictionary<int, string>();
             foreach (var kvp in customNameMappings)
                 slotToName[kvp.Value] = kvp.Key;
@@ -718,7 +886,6 @@ namespace LabtechScheduler
                                 tasks.Add(val);
                         }
 
-                        // Check name overrides
                         int finalSlot = defaultSlot;
                         string allText = colHeader + " " + string.Join(" ", tasks);
 
@@ -993,7 +1160,7 @@ foreach ($line in $result.Lines) {
             var confirm = MessageBox.Show(
                 $"Auto-Fill [{shift}] Schedule into Tally Board:\n\n" +
                 "1. Click OK.\n" +
-                "2. Click on the Tally Board window during the 3-second countdown to ensure it has focus.\n" +
+                "2. Click on the Tally Board window during the 3-second countdown.\n" +
                 "3. Hands off mouse & keyboard!",
                 "Start Auto-Fill",
                 MessageBoxButtons.OKCancel,
@@ -1008,24 +1175,7 @@ foreach ($line in $result.Lines) {
 
             await Task.Delay(3000);
 
-            IntPtr tallyHwnd = IntPtr.Zero;
-
-            // Direct process name search for TallyBoard.exe
-            Process[] procs = Process.GetProcessesByName("TallyBoard");
-            if (procs.Length == 0)
-                procs = Process.GetProcessesByName("tallyboard");
-
-            if (procs.Length > 0)
-            {
-                tallyHwnd = procs[0].MainWindowHandle;
-                SetForegroundWindow(tallyHwnd);
-            }
-            else
-            {
-                // Fallback: Check whatever window is currently foreground
-                tallyHwnd = GetForegroundWindow();
-            }
-
+            IntPtr tallyHwnd = FindTallyBoardWindow();
             if (tallyHwnd == IntPtr.Zero)
             {
                 MessageBox.Show("Could not attach to TallyBoard. Please ensure TallyBoard is running.", "Process Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1040,10 +1190,9 @@ foreach ($line in $result.Lines) {
             int windowX = rect.Left;
             int windowY = rect.Top;
 
-            int startRowY = windowY + 115;
-            int rowHeight = 24;
-            int col2X = windowX + 85;
-            int col3X = windowX + 220;
+            int startRowY = windowY + (int)numOffsetY.Value;
+            int col2X = windowX + (int)numCol2X.Value;
+            int col3X = windowX + (int)numCol3X.Value;
 
             lblStatus.Text = "Click-filling schedule into Tally Board...";
             lblStatus.ForeColor = Color.Blue;
@@ -1061,7 +1210,7 @@ foreach ($line in $result.Lines) {
 
                 int currentY = startRowY + ((i - 1) * rowHeight);
 
-                // Column 2 (Role)
+                // Column 2 (Role Code)
                 if (!string.IsNullOrEmpty(role))
                 {
                     SetCursorPos(col2X, currentY);
@@ -1075,7 +1224,7 @@ foreach ($line in $result.Lines) {
                     await Task.Delay(50);
                 }
 
-                // Column 3 (Station)
+                // Column 3 (Station Dropdown)
                 if (!string.IsNullOrEmpty(station))
                 {
                     SetCursorPos(col3X, currentY);
