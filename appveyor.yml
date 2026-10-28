@@ -1,0 +1,15 @@
+image: Visual Studio 2022
+
+configuration:
+  - Release
+
+before_build:
+  - nuget restore
+
+build:
+  verbosity: minimal
+  project: '**\*.sln'  # Automatically finds your solution or .csproj
+
+artifacts:
+  - path: '**\bin\Release\**\*.exe'
+    name: Application
